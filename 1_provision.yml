@@ -1,0 +1,48 @@
+---
+- name: Tự động tạo máy ảo (VM) trên Proxmox (Phiên bản Enterprise An toàn)
+  hosts: localhost 
+  gather_facts: no
+  
+  vars:
+    # Cấu hình tĩnh
+    proxmox_api_host: "192.168.2.15"       
+    proxmox_api_user: "root@pam"
+    proxmox_node: "promox"                 
+    template_name: "Ubuntu-2204-CloudInit" 
+    
+    # 🔒 MẬT KHẨU ĐƯỢC LẤY ĐỘNG TỪ HASHICORP VAULT (KHÔNG HARDCODE)
+    proxmox_api_password: "{{ lookup('env', 'VAULT_PROXMOX_PASS') }}"
+    cloudinit_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
+    ssh_pub_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
+
+  tasks:
+    - name: Bước 1 - Clone máy ảo mới và tiêm cấu hình Cloud-Init
+      community.general.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        node: "{{ proxmox_node }}"
+        clone: "{{ template_name }}"
+        newid: "{{ new_vm_id }}"
+        name: "{{ new_vm_name }}"
+        full: yes                      
+        cores: 2                       
+        memory: 2048                   
+        net:
+          net0: "virtio,bridge=vmbr0"
+        ipconfig:
+          ipconfig0: "ip={{ new_vm_ip }}/24,gw={{ new_vm_gw }}"
+        ciuser: "ubuntu"
+        cipassword: "{{ cloudinit_pass }}"
+        sshkeys: "{{ ssh_pub_key }}"
+        state: present                 
+        timeout: 300
+
+    - name: Bước 2 - Bật nguồn máy ảo qua ID
+      community.general.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_password: "{{ proxmox_api_password }}"
+        node: "{{ proxmox_node }}"
+        vmid: "{{ new_vm_id }}"
+        state: started

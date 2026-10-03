@@ -1,0 +1,39 @@
+---
+- name: Hardening OS - Bảo mật máy chủ toàn diện
+  hosts: live
+  become: yes
+  tasks:
+    - name: Cài đặt và bật Tường lửa UFW
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Chỉ mở Port cho SSH, HTTP và HTTPS
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - '22'
+        - '80'
+        - '443'
+
+    - name: Vô hiệu hóa đăng nhập SSH bằng mật khẩu (Chỉ dùng Key)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+      notify: Khởi động lại SSH
+
+    - name: Vô hiệu hóa tài khoản root đăng nhập trực tiếp
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin no'
+      notify: Khởi động lại SSH
+
+  handlers:
+    - name: Khởi động lại SSH
+      service:
+        name: sshd
+        state: restarted
