@@ -20,7 +20,7 @@
     ci_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
     ci_ssh_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
     
-    # Cấu hình Proxmox (ĐIỀN LẠI IP PROXMOX THỰC TẾ CỦA BẠN VÀO ĐÂY)
+    # Cấu hình Proxmox ĐÃ ĐƯỢC CẬP NHẬT IP THỰC TẾ
     pve_api_host: "192.168.2.15" 
     pve_api_user: "root@pam"
     pve_node: "promox"
@@ -72,26 +72,37 @@
         new_vm_id: "{{ pve_nextid.json.data }}"
         new_vm_name: "Web-{{ env_target | capitalize }}-{{ pve_nextid.json.data }}"
 
-    # CHẺ LÀM 2 BƯỚC ĐỂ FIX LỖI PROXMOX MODULE
-    - name: "BƯỚC 1: Nhân bản và Cấu hình máy ảo (Sử dụng DHCP)"
+    # --- CHẺ LÀM 3 BƯỚC ĐỂ FIX LỖI PROXMOX MODULE ---
+    - name: "BƯỚC 1: Nhân bản máy ảo từ Template ID 9000"
       community.general.proxmox_kvm:
         api_host: "{{ pve_api_host }}"
         api_user: "{{ pve_api_user }}"
         api_password: "{{ pve_api_pass }}"
         validate_certs: false
         node: "{{ pve_node }}"
-        clone: "Ubuntu-2204-CloudInit"
         vmid: "{{ new_vm_id | int }}"
         name: "{{ new_vm_name }}"
+        clone: 9000
         full: yes
+        state: present
+
+    - name: "BƯỚC 2: Tiêm cấu hình Cloud-Init (DHCP)"
+      community.general.proxmox_kvm:
+        api_host: "{{ pve_api_host }}"
+        api_user: "{{ pve_api_user }}"
+        api_password: "{{ pve_api_pass }}"
+        validate_certs: false
+        node: "{{ pve_node }}"
+        vmid: "{{ new_vm_id | int }}"
         ciuser: ubuntu
         cipassword: "{{ ci_pass }}"
         sshkeys: "{{ ci_ssh_key }}"
         ipconfig:
-          ipconfig0: "ip=dhcp" 
-        state: present   # <--- ĐỂ LÀ PRESENT ĐỂ CHỈ NHÂN BẢN & CẤU HÌNH
+          ipconfig0: "ip=dhcp"
+        update: yes
+        state: present
 
-    - name: "BƯỚC 2: Bật nguồn máy ảo"
+    - name: "BƯỚC 3: Bật nguồn máy ảo"
       community.general.proxmox_kvm:
         api_host: "{{ pve_api_host }}"
         api_user: "{{ pve_api_user }}"
@@ -99,8 +110,9 @@
         validate_certs: false
         node: "{{ pve_node }}"
         vmid: "{{ new_vm_id | int }}"
-        state: started   # <--- BẬT MÁY Ở TASK RIÊNG BIỆT
+        state: started
 
+    # --- CHỜ IP ĐỘNG (10 PHÚT) ---
     - name: "Chờ QEMU Agent báo cáo IP động (Tối đa 10 phút)"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
@@ -113,7 +125,7 @@
         - qga_result.status == 200
         - qga_result.json.data.result is defined
         - (qga_result.json.data.result | to_json | regex_search('192\\.168\\.2\\.\\d+'))
-      retries: 120    # <--- ĐÃ TĂNG LÊN 120 (10 PHÚT)
+      retries: 120
       delay: 5
 
     - name: "Trích xuất IP DHCP nhận được"
@@ -183,7 +195,7 @@
         host: "{{ final_ip }}"
         port: 22
         state: started
-        timeout: 600    # <--- ĐÃ TĂNG LÊN 600 GIÂY (10 PHÚT)
+        timeout: 600
 
     - name: "Ghi nhận IP tĩnh mới vào file inventory.ini"
       lineinfile:
