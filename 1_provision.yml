@@ -21,7 +21,7 @@
     ci_ssh_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
     
     # Cấu hình Proxmox (ĐIỀN LẠI IP PROXMOX THỰC TẾ CỦA BẠN VÀO ĐÂY)
-    pve_api_host: "192.168.2.xxx" 
+    pve_api_host: "192.168.2.15" 
     pve_api_user: "root@pam"
     pve_node: "promox"
 
