@@ -2,10 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'VM_ID', defaultValue: '303', description: 'ID cho máy ảo Proxmox')
-        string(name: 'VM_NAME', defaultValue: 'Web-Live-Auto', description: 'Tên máy ảo')
-        string(name: 'VM_IP', defaultValue: '192.168.2.89', description: 'IP tĩnh')
-        choice(name: 'ENV_TARGET', choices: ['live', 'staging', 'testing'], description: 'Môi trường để chạy Security Hardening')
+        choice(name: 'ENV_TARGET', choices: ['live', 'staging', 'testing'], description: 'Chọn môi trường để tự động cấp phát IP và máy chủ')
     }
 
     environment {
@@ -26,15 +23,13 @@ pipeline {
             }
         }
 
-        stage('💻 2. Tự động cấp phát máy ảo (Proxmox)') {
+        stage('💻 2. Tự động tìm IP & Cấp phát máy ảo (Ansible)') {
             steps {
                 sh """
                 ansible-galaxy install -r requirements.yml --force
-                ansible-playbook 1_provision.yml \
-                  -e "new_vm_id=${params.VM_ID}" \
-                  -e "new_vm_name=${params.VM_NAME}" \
-                  -e "new_vm_ip=${params.VM_IP}" \
-                  -e "new_vm_gw=192.168.2.1"
+                
+                # Jenkins chỉ cần ném biến môi trường, Ansible sẽ tự suy luận ID và IP
+                ansible-playbook 1_provision.yml -e "target_env=${params.ENV_TARGET}"
                 """
             }
         }
@@ -42,12 +37,10 @@ pipeline {
         stage('🛡 3. Củng cố bảo mật hệ điều hành (Security)') {
             steps {
                 sh """
-                echo "⏳ Đang chờ 600 giây để máy ảo mới (${params.VM_IP}) khởi động dịch vụ SSH..."
-                sleep 600
+                echo "⏳ Đang chờ 90 giây để máy ảo mới khởi động dịch vụ SSH..."
+                sleep 90
                 
-                echo "Tự động chèn IP ${params.VM_IP} vào nhóm [${params.ENV_TARGET}] để chạy bảo mật..."
-                sed -i "/\\[${params.ENV_TARGET}\\]/a ${params.VM_IP}" inventory.ini
-                
+                # Bỏ lệnh sed vì Ansible đã tự động cập nhật inventory.ini ở Stage 2
                 ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${params.ENV_TARGET}"
                 """
             }
@@ -57,13 +50,13 @@ pipeline {
     post {
         success {
             script {
-                def msg = "✅ [INFRA SUCCESS] Dựng máy ảo & Bảo mật thành công: ${params.VM_NAME} (IP: ${params.VM_IP})"
+                def msg = "✅ [INFRA SUCCESS] Dựng máy ảo & Bảo mật tự động hoàn tất cho cụm: ${params.ENV_TARGET.toUpperCase()}"
                 sh "curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage -d chat_id=${TELEGRAM_CHAT_ID} -d text=\"${msg}\""
             }
         }
         failure {
             script {
-                def msg = "❌ [INFRA FAILED] Lỗi khi tạo máy ảo hạ tầng ${params.VM_NAME}!"
+                def msg = "❌ [INFRA FAILED] Lỗi khi tạo máy ảo hạ tầng cụm: ${params.ENV_TARGET.toUpperCase()}!"
                 sh "curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage -d chat_id=${TELEGRAM_CHAT_ID} -d text=\"${msg}\""
             }
         }

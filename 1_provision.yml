@@ -1,48 +1,133 @@
 ---
-- name: Tự động tạo máy ảo (VM) trên Proxmox (Phiên bản Enterprise An toàn)
-  hosts: localhost 
-  gather_facts: no
-  
+- name: Zero-Touch Provisioning - Tự động hóa hạ tầng Proxmox
+  hosts: localhost
+  connection: local
+  gather_facts: false
   vars:
-    # Cấu hình tĩnh
-    proxmox_api_host: "192.168.2.15"       
-    proxmox_api_user: "root@pam"
-    proxmox_node: "promox"                 
-    template_name: "Ubuntu-2204-CloudInit" 
-    
-    # 🔒 MẬT KHẨU ĐƯỢC LẤY ĐỘNG TỪ HASHICORP VAULT (KHÔNG HARDCODE)
-    proxmox_api_password: "{{ lookup('env', 'VAULT_PROXMOX_PASS') }}"
-    cloudinit_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
-    ssh_pub_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
+    # 1. Tham số môi trường nhận từ Jenkins (live, staging, testing)
+    env_target: "{{ target_env }}"
+    base_subnet: "192.168.2"
+    gw_ip: "192.168.2.1"
+
+    # 2. Quy hoạch dải IP cố định cho từng môi trường
+    ip_pools:
+      live: { start: 100, end: 149 }
+      staging: { start: 150, end: 199 }
+      testing: { start: 200, end: 249 }
+
+    # 3. Lấy mật khẩu động từ Vault (Do Jenkins truyền vào)
+    pve_api_pass: "{{ lookup('env', 'VAULT_PROXMOX_PASS') }}"
+    ci_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
+    ci_ssh_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
+
+    # 4. Cấu hình máy chủ Proxmox (Bạn CẦN THAY ĐỔI IP thành IP thực tế của Proxmox)
+    pve_api_host: "192.168.2.15" # <-- ĐIỀN IP CỦA MÁY CHỦ PROXMOX VÀO ĐÂY
+    pve_api_user: "root@pam"
+    pve_node: "promox"            # Tên node chính xác theo ảnh của bạn
 
   tasks:
-    - name: Bước 1 - Clone máy ảo mới và tiêm cấu hình Cloud-Init
-      community.general.proxmox_kvm:
-        api_host: "{{ proxmox_api_host }}"
-        api_user: "{{ proxmox_api_user }}"
-        api_password: "{{ proxmox_api_password }}"
-        node: "{{ proxmox_node }}"
-        clone: "{{ template_name }}"
-        newid: "{{ new_vm_id }}"
-        name: "{{ new_vm_name }}"
-        full: yes                      
-        cores: 2                       
-        memory: 2048                   
-        net:
-          net0: "virtio,bridge=vmbr0"
-        ipconfig:
-          ipconfig0: "ip={{ new_vm_ip }}/24,gw={{ new_vm_gw }}"
-        ciuser: "ubuntu"
-        cipassword: "{{ cloudinit_pass }}"
-        sshkeys: "{{ ssh_pub_key }}"
-        state: present                 
-        timeout: 300
+    # ===================================================================
+    # GIAI ĐOẠN 1: QUYÉT VÀ TÌM ĐỊA CHỈ IP TRỐNG (IP HUNTING)
+    # ===================================================================
+    - name: Đọc danh sách IP đang sử dụng trong nhóm [{{ env_target }}] từ inventory.ini
+      shell: "awk '/^\\[{{ env_target }}\\]/{flag=1; next} /^\\[/{flag=0} flag && NF {print $1}' inventory.ini"
+      register: used_ips_result
+      changed_when: false
 
-    - name: Bước 2 - Bật nguồn máy ảo qua ID
+    - name: Tạo dải IP quy hoạch và danh sách IP đã bị chiếm
+      set_fact:
+        all_pool_ips: "{{ range(ip_pools[env_target].start, ip_pools[env_target].end + 1) | map('regex_replace', '^(.*)$', base_subnet ~ '.\\1') | list }}"
+        used_ips: "{{ used_ips_result.stdout_lines }}"
+
+    - name: Lọc ra các IP chưa có mặt trong file text
+      set_fact:
+        available_ips_in_file: "{{ all_pool_ips | difference(used_ips) }}"
+
+    - name: Bắn Ping kiểm tra thực tế trên mạng để tránh rủi ro IP Conflict
+      shell: "ping -c 1 -W 1 {{ item }} > /dev/null 2>&1"
+      loop: "{{ available_ips_in_file }}"
+      register: ping_results
+      ignore_errors: true
+      changed_when: false
+
+    - name: Chốt IP trống an toàn đầu tiên (Fill the gap)
+      set_fact:
+        new_vm_ip: "{{ item.item }}"
+      loop: "{{ ping_results.results }}"
+      when: item.rc != 0  # Lệnh ping trả về lỗi (Network unreachable) nghĩa là IP thực sự trống
+      loop_control:
+        label: "{{ item.item }}"
+      no_log: true
+
+    - name: Kiểm tra cạn kiệt dải IP
+      fail:
+        msg: "CRITICAL: Không tìm thấy địa chỉ IP trống nào trong dải {{ env_target }}!"
+      when: new_vm_ip is not defined
+
+    # ===================================================================
+    # GIAI ĐOẠN 2: LẤY ID TRỐNG TỪ PROXMOX API
+    # ===================================================================
+    - name: Lấy Ticket xác thực từ API Proxmox
+      uri:
+        url: "https://{{ pve_api_host }}:8006/api2/json/access/ticket"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          username: "{{ pve_api_user }}"
+          password: "{{ pve_api_pass }}"
+        validate_certs: false
+      register: pve_auth
+
+    - name: Xin cấp ID trống tiếp theo (nextid) từ Cụm
+      uri:
+        url: "https://{{ pve_api_host }}:8006/api2/json/cluster/nextid"
+        method: GET
+        headers:
+          Cookie: "PVEAuthCookie={{ pve_auth.json.data.ticket }}"
+        validate_certs: false
+      register: pve_nextid_response
+
+    - name: Chốt ID và tự động sinh Tên máy ảo
+      set_fact:
+        new_vm_id: "{{ pve_nextid_response.json.data }}"
+        new_vm_name: "Web-{{ env_target | capitalize }}-{{ pve_nextid_response.json.data }}"
+
+    - name: Tóm tắt thông số cấu hình sẽ thực thi
+      debug:
+        msg: "Sẵn sàng tạo máy ảo {{ new_vm_name }} (ID: {{ new_vm_id }}) với IP tĩnh: {{ new_vm_ip }}"
+
+    # ===================================================================
+    # GIAI ĐOẠN 3: RA LỆNH TẠO MÁY ẢO VÀ TIÊM CLOUD-INIT
+    # ===================================================================
+    - name: Nhân bản máy ảo từ Template 9000
       community.general.proxmox_kvm:
-        api_host: "{{ proxmox_api_host }}"
-        api_user: "{{ proxmox_api_user }}"
-        api_password: "{{ proxmox_api_password }}"
-        node: "{{ proxmox_node }}"
+        api_host: "{{ pve_api_host }}"
+        api_user: "{{ pve_api_user }}"
+        api_password: "{{ pve_api_pass }}"
+        validate_certs: false
+        node: "{{ pve_node }}"
+        
+        clone: "Ubuntu-2204-CloudInit"
         vmid: "{{ new_vm_id }}"
+        name: "{{ new_vm_name }}"
+        full: yes
+        
+        # Cấu hình Mạng & Bảo mật qua Cloud-Init
+        ciuser: ubuntu
+        cipassword: "{{ ci_pass }}"
+        sshkeys: "{{ ci_ssh_key }}"
+        ipconfig:
+          ipconfig0: "ip={{ new_vm_ip }}/24,gw={{ gw_ip }}"
+        
+        # Tự động bật máy sau khi tạo
         state: started
+
+    # ===================================================================
+    # GIAI ĐOẠN 4: CẬP NHẬT CƠ SỞ DỮ LIỆU CỤC BỘ (INVENTORY)
+    # ===================================================================
+    - name: Tự động ghi IP tĩnh vừa cấp phát vào danh sách {{ env_target }}
+      lineinfile:
+        path: inventory.ini
+        insertafter: '^\\[{{ env_target }}\\]'
+        line: "{{ new_vm_ip }}"
+        state: present
