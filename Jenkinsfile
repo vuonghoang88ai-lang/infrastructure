@@ -41,7 +41,9 @@ pipeline {
 
         stage('🛡 3. Củng cố bảo mật hệ điều hành (Security)') {
             steps {
-                sh 'ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${params.ENV_TARGET}"'
+                sh """
+                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${params.ENV_TARGET}"
+                """
             }
         }
     }
