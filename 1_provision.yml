@@ -15,15 +15,13 @@
       staging: { start: 150, end: 199 }
       testing: { start: 200, end: 249 }
 
-    # Lấy mật khẩu từ Vault
     pve_api_pass: "{{ lookup('env', 'VAULT_PROXMOX_PASS') }}"
     ci_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
     ci_ssh_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
     
-    # Cấu hình Proxmox ĐÃ ĐƯỢC CẬP NHẬT IP THỰC TẾ
     pve_api_host: "192.168.2.15" 
     pve_api_user: "root@pam"
-    pve_node: "promox"
+    # ĐÃ XÓA BIẾN pve_node Ở ĐÂY ĐỂ HỆ THỐNG TỰ ĐỘNG TÌM ĐÚNG CHÍNH TẢ!
 
   tasks:
     - name: "Lấy danh sách IP đã dùng từ inventory.ini"
@@ -67,22 +65,44 @@
         validate_certs: false
       register: pve_nextid
 
+    # --- THUẬT TOÁN AUTO-DISCOVERY (SỬA LỖI SAI TÊN NODE VÀ TEMPLATE) ---
+    - name: "Quét toàn bộ cụm Proxmox để định vị Template 9000"
+      uri:
+        url: "https://{{ pve_api_host }}:8006/api2/json/cluster/resources?type=vm"
+        method: GET
+        headers: { Cookie: "PVEAuthCookie={{ pve_auth.json.data.ticket }}" }
+        validate_certs: false
+      register: cluster_vms
+
+    - name: "Trích xuất TÊN và vị trí NODE của Template 9000"
+      set_fact:
+        pve_node: "{{ item.node }}"
+        template_name: "{{ item.name }}"
+      loop: "{{ cluster_vms.json.data }}"
+      when: item.vmid | int == 9000
+      no_log: true
+
+    - name: "Kiểm tra sự tồn tại của Template"
+      fail:
+        msg: "CRITICAL: Không tìm thấy bất kỳ máy ảo/template nào có ID là 9000!"
+      when: template_name is not defined
+
     - name: "Khởi tạo thông số VM"
       set_fact:
         new_vm_id: "{{ pve_nextid.json.data }}"
         new_vm_name: "Web-{{ env_target | capitalize }}-{{ pve_nextid.json.data }}"
 
-    # --- CHẺ LÀM 3 BƯỚC ĐỂ FIX LỖI PROXMOX MODULE ---
-    - name: "BƯỚC 1: Nhân bản máy ảo từ Template ID 9000"
+    # --- CHẺ LÀM 3 BƯỚC ĐỂ FIX LỖI PROXMOX KVM ---
+    - name: "BƯỚC 1: Nhân bản máy ảo từ Template [{{ template_name }}]"
       community.general.proxmox_kvm:
         api_host: "{{ pve_api_host }}"
         api_user: "{{ pve_api_user }}"
         api_password: "{{ pve_api_pass }}"
         validate_certs: false
-        node: "{{ pve_node }}"
+        node: "{{ pve_node }}"        # <-- Điền tự động đúng 100%
         vmid: "{{ new_vm_id | int }}"
         name: "{{ new_vm_name }}"
-        clone: 9000
+        clone: "{{ template_name }}"  # <-- Điền tự động đúng 100%
         full: yes
         state: present
 
@@ -112,7 +132,7 @@
         vmid: "{{ new_vm_id | int }}"
         state: started
 
-    # --- CHỜ IP ĐỘNG (10 PHÚT) ---
+    # --- CHỜ IP ĐỘNG TỪ QEMU (10 PHÚT) ---
     - name: "Chờ QEMU Agent báo cáo IP động (Tối đa 10 phút)"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
@@ -132,7 +152,7 @@
       set_fact:
         dhcp_ip: "{{ qga_result.json.data.result | to_json | regex_findall('192\\.168\\.2\\.\\d+') | first }}"
 
-    - name: "Trích xuất tên Card mạng (VD: ens18) từ Proxmox QEMU Agent"
+    - name: "Trích xuất tên Card mạng từ Proxmox QEMU Agent"
       set_fact:
         pve_iface: "{{ qga_result.json.data.result | selectattr('name', '!=', 'lo') | map(attribute='name') | first }}"
 
