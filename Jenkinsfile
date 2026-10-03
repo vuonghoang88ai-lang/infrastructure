@@ -8,7 +8,8 @@ pipeline {
     environment {
         TELEGRAM_TOKEN = "7834830282:AAGupEEZ4IYjfmO_FkNFFsmBVzd6F1JpxPg"
         TELEGRAM_CHAT_ID = "5094340711"
-        VAULT_ADDR = "http://127.0.0.1:8200"
+        VAULT_ADDR = "https://127.0.0.1:8200"
+        VAULT_SKIP_VERIFY = "true"
         VAULT_TOKEN = credentials('vault-root-token')
     }
 
