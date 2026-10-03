@@ -42,8 +42,8 @@ pipeline {
         stage('🛡 3. Củng cố bảo mật hệ điều hành (Security)') {
             steps {
                 sh """
-                echo "⏳ Đang chờ 180 giây để máy ảo mới (${params.VM_IP}) khởi động dịch vụ SSH..."
-                sleep 180
+                echo "⏳ Đang chờ 600 giây để máy ảo mới (${params.VM_IP}) khởi động dịch vụ SSH..."
+                sleep 600
                 
                 echo "Tự động chèn IP ${params.VM_IP} vào nhóm [${params.ENV_TARGET}] để chạy bảo mật..."
                 sed -i "/\\[${params.ENV_TARGET}\\]/a ${params.VM_IP}" inventory.ini
