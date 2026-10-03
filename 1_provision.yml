@@ -2,7 +2,7 @@
 # ===================================================================
 # PLAY 1: TẠO MÁY BẰNG DHCP VÀ HỎI PROXMOX LẤY IP ĐỘNG
 # ===================================================================
-- name: Tạo VM (DHCP) và chờ QEMU Agent
+- name: "Tạo VM (DHCP) và chờ QEMU Agent"
   hosts: localhost
   connection: local
   gather_facts: false
@@ -26,33 +26,31 @@
     pve_node: "promox"
 
   tasks:
-    # 1. Tính toán trước IP tĩnh mục tiêu (Giữ nguyên logic săn IP trống an toàn)
-    - name: Lấy danh sách IP đã dùng từ inventory.ini
+    - name: "Lấy danh sách IP đã dùng từ inventory.ini"
       shell: "awk '/^\\[{{ env_target }}\\]/{flag=1; next} /^\\[/{flag=0} flag && NF {print $1}' inventory.ini"
       register: used_ips_result
       changed_when: false
 
-    - name: Tính toán IP tĩnh sẽ được gán
+    - name: "Tính toán IP tĩnh sẽ được gán"
       set_fact:
         all_pool_ips: "{{ range(ip_pools[env_target].start, ip_pools[env_target].end + 1) | map('regex_replace', '^(.*)$', base_subnet ~ '.\\1') | list }}"
         used_ips: "{{ used_ips_result.stdout_lines }}"
         
-    - name: Chốt IP Tĩnh mục tiêu (Ping check lấp khoảng trống)
+    - name: "Chốt IP Tĩnh mục tiêu (Ping check lấp khoảng trống)"
       shell: "ping -c 1 -W 1 {{ item }} > /dev/null 2>&1"
       loop: "{{ all_pool_ips | difference(used_ips) }}"
       register: ping_results
       ignore_errors: true
       changed_when: false
 
-    - name: Xác định Target Static IP
+    - name: "Xác định Target Static IP"
       set_fact:
         target_static_ip: "{{ item.item }}"
       loop: "{{ ping_results.results }}"
       when: item.rc != 0 and target_static_ip is not defined
       no_log: true
 
-    # 2. Sinh ID và Tạo VM với cấu hình DHCP
-    - name: Xác thực API Proxmox
+    - name: "Xác thực API Proxmox"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/access/ticket"
         method: POST
@@ -61,7 +59,7 @@
         validate_certs: false
       register: pve_auth
 
-    - name: Lấy ID trống tiếp theo
+    - name: "Lấy ID trống tiếp theo"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/cluster/nextid"
         method: GET
@@ -69,12 +67,12 @@
         validate_certs: false
       register: pve_nextid
 
-    - name: Khởi tạo thông số VM
+    - name: "Khởi tạo thông số VM"
       set_fact:
         new_vm_id: "{{ pve_nextid.json.data }}"
         new_vm_name: "Web-{{ env_target | capitalize }}-{{ pve_nextid.json.data }}"
 
-    - name: Ra lệnh tạo máy ảo (Sử dụng DHCP)
+    - name: "Ra lệnh tạo máy ảo (Sử dụng DHCP)"
       community.general.proxmox_kvm:
         api_host: "{{ pve_api_host }}"
         api_user: "{{ pve_api_user }}"
@@ -89,11 +87,10 @@
         cipassword: "{{ ci_pass }}"
         sshkeys: "{{ ci_ssh_key }}"
         ipconfig:
-          ipconfig0: "ip=dhcp" # <-- CẤP DHCP ĐỂ NHẬN IP ĐỘNG TRƯỚC
+          ipconfig0: "ip=dhcp" 
         state: started
 
-    # 3. Chờ và hỏi IP động từ QEMU Guest Agent
-    - name: Chờ QEMU Agent báo cáo IP động (Tối đa 3 phút)
+    - name: "Chờ QEMU Agent báo cáo IP động (Tối đa 3 phút)"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
         method: GET
@@ -105,18 +102,23 @@
         - qga_result.status == 200
         - qga_result.json.data.result is defined
         - (qga_result.json.data.result | to_json | regex_search('192\\.168\\.2\\.\\d+'))
-      retries: 36
-      delay: 5
+      retries: 100
+      delay: 10
 
-    - name: Trích xuất IP DHCP nhận được
+    - name: "Trích xuất IP DHCP nhận được"
       set_fact:
         dhcp_ip: "{{ qga_result.json.data.result | to_json | regex_findall('192\\.168\\.2\\.\\d+') | first }}"
 
-    - name: Nạp máy ảo tạm thời vào bộ nhớ Ansible để SSH
+    - name: "Trích xuất tên Card mạng (VD: ens18) từ Proxmox QEMU Agent"
+      set_fact:
+        pve_iface: "{{ qga_result.json.data.result | selectattr('name', '!=', 'lo') | map(attribute='name') | first }}"
+
+    - name: "Nạp máy ảo tạm thời vào bộ nhớ Ansible để SSH"
       add_host:
         name: "{{ dhcp_ip }}"
         groups: temp_vm
         target_static_ip: "{{ target_static_ip }}"
+        target_iface: "{{ pve_iface }}"
         ansible_user: ubuntu
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
 
@@ -124,23 +126,19 @@
 # ===================================================================
 # PLAY 2: SSH VÀO IP ĐỘNG, SET IP TĨNH, VÀ THOÁT RA (FIRE & FORGET)
 # ===================================================================
-- name: Đăng nhập SSH và cấu hình IP Tĩnh
+- name: "Đăng nhập SSH và cấu hình IP Tĩnh"
   hosts: temp_vm
   become: yes
-  gather_facts: yes
+  gather_facts: no  # Đã tắt gather_facts vì lấy card mạng từ Proxmox
   tasks:
-    - name: Lấy tên card mạng thực tế (VD: ens18, eth0)
-      set_fact:
-        iface_name: "{{ ansible_default_ipv4.interface }}"
-
-    - name: Ghi đè cấu hình Netplan sang IP tĩnh
+    - name: "Ghi đè cấu hình Netplan sang IP tĩnh"
       copy:
         dest: /etc/netplan/99-static.yaml
         content: |
           network:
             version: 2
             ethernets:
-              {{ iface_name }}:
+              {{ target_iface }}:
                 dhcp4: false
                 addresses: [ "{{ target_static_ip }}/24" ]
                 routes:
@@ -149,7 +147,7 @@
                 nameservers:
                   addresses: [8.8.8.8, 1.1.1.1]
 
-    - name: Áp dụng Netplan và ngắt kết nối SSH an toàn
+    - name: "Áp dụng Netplan và ngắt kết nối SSH an toàn"
       shell: "sleep 2 && netplan apply"
       async: 45
       poll: 0
@@ -159,24 +157,24 @@
 # ===================================================================
 # PLAY 3: CHỜ IP TĨNH LÊN MẠNG VÀ GHI VÀO INVENTORY
 # ===================================================================
-- name: Nghiệm thu và Cập nhật Inventory
+- name: "Nghiệm thu và Cập nhật Inventory"
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: Lấy biến IP tĩnh từ host tạm
+    - name: "Lấy thông số IP tĩnh từ host tạm"
       set_fact:
         final_ip: "{{ hostvars[groups['temp_vm'][0]]['target_static_ip'] }}"
         env_target: "{{ target_env }}"
 
-    - name: Đợi máy ảo lên mạng với IP tĩnh mới (Tối đa 60 giây)
+    - name: "Đợi máy ảo lên mạng với IP tĩnh mới (Tối đa 60 giây)"
       wait_for:
         host: "{{ final_ip }}"
         port: 22
         state: started
-        timeout: 60
+        timeout: 600
 
-    - name: Ghi nhận IP tĩnh {{ final_ip }} vào file inventory.ini
+    - name: "Ghi nhận IP tĩnh mới vào file inventory.ini"
       lineinfile:
         path: inventory.ini
         insertafter: '^\\[{{ env_target }}\\]'
@@ -187,13 +185,13 @@
 # ===================================================================
 # PLAY 4: ĐẢM BẢO QUYỀN VÀ SỞ HỮU FILE LOCAL TRÊN CI/CD
 # ===================================================================
-- name: Đảm bảo phân quyền các file trong thư mục dự án
+- name: "Đảm bảo phân quyền các file trong thư mục dự án"
   hosts: localhost
   connection: local
   gather_facts: false
-  become: yes  # Yêu cầu quyền sudo trên máy chạy Jenkins
+  become: yes  
   tasks:
-    - name: Thiết lập quyền (mode) và chủ sở hữu (owner/group) cho từng file
+    - name: "Thiết lập quyền (mode) và chủ sở hữu (owner/group) cho từng file"
       file:
         path: "{{ playbook_dir }}/{{ item.path }}"
         owner: "{{ item.owner }}"
