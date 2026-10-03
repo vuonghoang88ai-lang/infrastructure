@@ -18,8 +18,8 @@
     pve_api_pass: "{{ lookup('env', 'VAULT_PROXMOX_PASS') }}"
     ci_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
     ci_ssh_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
-    
-    pve_api_host: "192.168.2.15" 
+
+    pve_api_host: "192.168.2.15"
     pve_api_user: "root@pam"
 
   tasks:
@@ -32,7 +32,7 @@
       set_fact:
         all_pool_ips: "{{ range(ip_pools[env_target].start, ip_pools[env_target].end + 1) | map('regex_replace', '^(.*)$', base_subnet ~ '.\\1') | list }}"
         used_ips: "{{ used_ips_result.stdout_lines }}"
-        
+
     - name: "Chốt IP Tĩnh mục tiêu (Ping check lấp khoảng trống)"
       shell: "ping -c 1 -W 1 {{ item }} > /dev/null 2>&1"
       loop: "{{ all_pool_ips | difference(used_ips) }}"
@@ -64,7 +64,7 @@
         validate_certs: false
       register: pve_nextid
 
-    - name: "Quét toàn bộ cụm Proxmox để định vị Template 9000"
+    - name: "Quét toàn bộ cụm Proxmox để định vị Template 9002"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/cluster/resources?type=vm"
         method: GET
@@ -72,17 +72,17 @@
         validate_certs: false
       register: cluster_vms
 
-    - name: "Trích xuất TÊN và vị trí NODE của Template 9000"
+    - name: "Trích xuất TÊN và vị trí NODE của Template 9002"
       set_fact:
         pve_node: "{{ item.node }}"
         template_name: "{{ item.name }}"
       loop: "{{ cluster_vms.json.data }}"
-      when: item.vmid | int == 9000
+      when: item.vmid | int == 9002
       no_log: true
 
     - name: "Kiểm tra sự tồn tại của Template"
       fail:
-        msg: "CRITICAL: Không tìm thấy bất kỳ máy ảo/template nào có ID là 9000!"
+        msg: "CRITICAL: Không tìm thấy bất kỳ máy ảo/template nào có ID là 9002!"
       when: template_name is not defined
 
     - name: "Khởi tạo thông số VM"
@@ -90,15 +90,14 @@
         new_vm_id: "{{ pve_nextid.json.data }}"
         new_vm_name: "Web-{{ env_target | capitalize }}-{{ pve_nextid.json.data }}"
 
-    # --- BỎ QUA VMID ĐỂ LÁCH LUẬT LỖI CỦA ANSIBLE PROXMOX MODULE ---
-    - name: "BƯỚC 1: Nhân bản & Cấu hình mạng DHCP (Quản lý qua Tên)"
+    - name: "BƯỚC 1: Nhân bản & Cấu hình mạng DHCP từ Template 9002"
       community.general.proxmox_kvm:
         api_host: "{{ pve_api_host }}"
         api_user: "{{ pve_api_user }}"
         api_password: "{{ pve_api_pass }}"
         validate_certs: false
         node: "{{ pve_node }}"
-        name: "{{ new_vm_name }}"        # <-- CHỈ DÙNG TÊN. Proxmox sẽ tự gắn ID
+        name: "{{ new_vm_name }}"
         clone: "{{ template_name }}"
         full: yes
         ciuser: ubuntu
@@ -115,10 +114,9 @@
         api_password: "{{ pve_api_pass }}"
         validate_certs: false
         node: "{{ pve_node }}"
-        name: "{{ new_vm_name }}"        # <-- CHỈ DÙNG TÊN ĐỂ BẬT NGUỒN
+        name: "{{ new_vm_name }}"
         state: started
 
-    # --- CHỜ IP ĐỘNG TỪ QEMU (10 PHÚT) ---
     - name: "Chờ QEMU Agent báo cáo IP động (Tối đa 10 phút)"
       uri:
         url: "https://{{ pve_api_host }}:8006/api2/json/nodes/{{ pve_node }}/qemu/{{ new_vm_id }}/agent/network-get-interfaces"
@@ -127,7 +125,7 @@
         validate_certs: false
         status_code: [200, 500]
       register: qga_result
-      until: 
+      until:
         - qga_result.status == 200
         - qga_result.json.data.result is defined
         - (qga_result.json.data.result | to_json | regex_search('192\\.168\\.2\\.\\d+'))
@@ -158,7 +156,7 @@
 - name: "Đăng nhập SSH và cấu hình IP Tĩnh"
   hosts: temp_vm
   become: yes
-  gather_facts: no  
+  gather_facts: no
   tasks:
     - name: "Ghi đè cấu hình Netplan sang IP tĩnh"
       copy:
@@ -218,7 +216,7 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  become: yes  
+  become: yes
   tasks:
     - name: "Thiết lập quyền (mode) và chủ sở hữu (owner/group) cho từng file"
       file:
