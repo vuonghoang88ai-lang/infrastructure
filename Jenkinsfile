@@ -10,8 +10,8 @@ pipeline {
         VAULT_ADDR = 'https://127.0.0.1:8200'
         VAULT_SKIP_VERIFY = 'true'
         
-        // Tùy thuộc vào ID credential của bạn trên Jenkins, tên ở đây có thể khác đôi chút (ví dụ 'vault-token')
-        VAULT_TOKEN = credentials('vault-token') 
+        // Tùy thuộc vào ID credential của bạn trên Jenkins, tên ở đây có thể khác đôi chút (ví dụ 'vault-root-token')
+        VAULT_TOKEN = credentials('vault-root-token') 
     }
 
     stages {
