@@ -26,7 +26,6 @@ pipeline {
 
         stage('💻 2. Tự động tìm IP & Cấp phát máy ảo (Ansible)') {
             steps {
-                // Sử dụng nháy đơn (''') để Linux Shell tự xử lý biến $ENV_TARGET, tránh lỗi Bad substitution
                 sh '''
                 ansible-galaxy install -r requirements.yml --force
                 ansible-playbook 1_provision.yml -e "target_env=${ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519"
@@ -47,22 +46,18 @@ pipeline {
 
     post {
         success {
-            node {
-                sh '''
-                curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage \
-                -d chat_id=${TELEGRAM_CHAT_ID} \
-                -d text="✅ [INFRA SUCCESS] Dựng máy ảo & Bảo mật tự động hoàn tất cho cụm: ${ENV_TARGET}"
-                '''
-            }
+            sh '''
+            curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage \
+            -d chat_id=${TELEGRAM_CHAT_ID} \
+            -d text="✅ [INFRA SUCCESS] Dựng máy ảo & Bảo mật tự động hoàn tất cho cụm: ${ENV_TARGET}"
+            '''
         }
         failure {
-            node {
-                sh '''
-                curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage \
-                -d chat_id=${TELEGRAM_CHAT_ID} \
-                -d text="❌ [INFRA FAILED] Lỗi khi tạo máy ảo hạ tầng cụm: ${ENV_TARGET}"
-                '''
-            }
+            sh '''
+            curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage \
+            -d chat_id=${TELEGRAM_CHAT_ID} \
+            -d text="❌ [INFRA FAILED] Lỗi khi tạo máy ảo hạ tầng cụm: ${ENV_TARGET}"
+            '''
         }
     }
 }
