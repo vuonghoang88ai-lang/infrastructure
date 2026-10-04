@@ -106,7 +106,8 @@
         full: yes
         ciuser: ubuntu
         cipassword: "{{ ci_pass }}"
-        sshkeys: "{{ ci_ssh_key }}"
+#        sshkeys: "{{ ci_ssh_key }}"
+        sshkeys: "{{ ci_ssh_key | urlencode }}"
         ipconfig:
           ipconfig0: "ip=dhcp"
         state: present
