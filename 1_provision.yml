@@ -173,7 +173,11 @@
                     via: 192.168.2.1
                 nameservers:
                   addresses: [8.8.8.8, 1.1.1.1]
-
+  tasks:
+    - name: Chờ dịch vụ SSH (Port 22) khởi động hoàn tất
+      wait_for_connection:
+        delay: 5
+        timeout: 120
     - name: "Áp dụng Netplan và ngắt kết nối SSH an toàn"
       shell: "sleep 2 && netplan apply"
       async: 45
