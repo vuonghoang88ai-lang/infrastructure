@@ -28,9 +28,9 @@ pipeline {
             steps {
                 sh """
                 ansible-galaxy install -r requirements.yml --force
-                
+                                
                 # Jenkins chỉ cần ném biến môi trường, Ansible sẽ tự suy luận ID và IP
-                ansible-playbook 1_provision.yml -e "target_env=${params.ENV_TARGET}"
+                ansible-playbook 1_provision.yml -e "target_env=${params.ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519"
                 """
             }
         }
@@ -42,7 +42,7 @@ pipeline {
                 sleep 90
                 
                 # Bỏ lệnh sed vì Ansible đã tự động cập nhật inventory.ini ở Stage 2
-                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${params.ENV_TARGET}"
+                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${params.ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519"
                 """
             }
         }
