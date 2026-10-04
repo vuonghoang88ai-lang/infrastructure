@@ -39,7 +39,8 @@ pipeline {
                 echo "⏳ Đang chờ 90 giây để máy ảo mới khởi động dịch vụ SSH..."
                 sleep 90
 #                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519"
-                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519" -e 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"'
+#                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519" -e 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"'
+                ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${ENV_TARGET}" -e "ansible_user=ubuntu" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519" -e 'ansible_ssh_common_args="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"'
                 '''
             }
         }
