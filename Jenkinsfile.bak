@@ -17,9 +17,11 @@ pipeline {
         stage('🔒 1. Mở két sắt Vault (Lấy mật khẩu)') {
             steps {
                 script {
-                    env.VAULT_PROXMOX_PASS = sh(script: "VAULT_TOKEN=${env.VAULT_TOKEN} vault kv get -field=api_password secret/proxmox", returnStdout: true).trim()
-                    env.VAULT_CLOUDINIT_PASS = sh(script: "VAULT_TOKEN=${env.VAULT_TOKEN} vault kv get -field=cloudinit_password secret/proxmox", returnStdout: true).trim()
-                    env.VAULT_SSH_PUB_KEY = sh(script: "VAULT_TOKEN=${env.VAULT_TOKEN} vault kv get -field=ssh_pub_key secret/proxmox", returnStdout: true).trim()
+                    // Dùng dấu nháy đơn ('') để tránh lỗi bảo mật nội suy chuỗi của Groovy.
+                    // Jenkins tự động ngầm truyền biến VAULT_TOKEN an toàn xuống shell.
+                    env.VAULT_PROXMOX_PASS = sh(script: 'vault kv get -field=api_password secret/proxmox', returnStdout: true).trim()
+                    env.VAULT_CLOUDINIT_PASS = sh(script: 'vault kv get -field=cloudinit_password secret/proxmox', returnStdout: true).trim()
+                    env.VAULT_SSH_PUB_KEY = sh(script: 'vault kv get -field=ssh_pub_key secret/proxmox', returnStdout: true).trim()
                 }
             }
         }
@@ -28,7 +30,7 @@ pipeline {
             steps {
                 sh """
                 ansible-galaxy install -r requirements.yml --force
-                                
+
                 # Jenkins chỉ cần ném biến môi trường, Ansible sẽ tự suy luận ID và IP
                 ansible-playbook 1_provision.yml -e "target_env=${params.ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519"
                 """
@@ -40,7 +42,7 @@ pipeline {
                 sh """
                 echo "⏳ Đang chờ 90 giây để máy ảo mới khởi động dịch vụ SSH..."
                 sleep 90
-                
+
                 # Bỏ lệnh sed vì Ansible đã tự động cập nhật inventory.ini ở Stage 2
                 ansible-playbook -i inventory.ini 2_security.yml -e "target_env=${params.ENV_TARGET}" -e "ansible_ssh_private_key_file=~/.ssh/id_ed25519"
                 """
