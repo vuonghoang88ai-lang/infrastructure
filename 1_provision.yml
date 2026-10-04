@@ -16,7 +16,8 @@
       testing: { start: 200, end: 249 }
 
     pve_api_pass: "{{ lookup('env', 'VAULT_PROXMOX_PASS') }}"
-    ci_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
+#    ci_pass: "{{ lookup('env', 'VAULT_CLOUDINIT_PASS') }}"
+    ci_ssh_key: "{{ lookup('file', '/var/lib/jenkins/.ssh/id_ed25519.pub') }}"O
     ci_ssh_key: "{{ lookup('env', 'VAULT_SSH_PUB_KEY') }}"
 
     pve_api_host: "192.168.2.15"
